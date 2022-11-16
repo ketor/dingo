@@ -27,6 +27,7 @@ import io.dingodb.common.util.FileUtils;
 import org.rocksdb.*;
 
 import java.io.File;
+import java.nio.file.Files;
 
 public class RocksStorageTest {
     static {
@@ -112,7 +113,7 @@ public class RocksStorageTest {
                 Assertions.assertEquals(directories.length, 3);
 
                 // test GetLatestCheckpointName
-                String latest_checkpoint_name = storage.GetLatestCheckpointName();
+                String latest_checkpoint_name = storage.GetLatestCheckpointName(storage.LOCAL_CHECKPOINT_PREFIX);
                 for (File checkpoint_dir : directories) {
                     Assertions.assertTrue(checkpoint_dir.getName().compareTo(latest_checkpoint_name) <= 0);
                 }
@@ -127,7 +128,15 @@ public class RocksStorageTest {
                 byte[] value = storage.db.get(test_key.getBytes());
                 Assertions.assertNull(value);
 
-                storage.restoreFromCheckpoint();
+                // make a fake remote checkpoint
+                Files.move(
+                    storage.checkpointPath.resolve(latest_checkpoint_name),
+                    storage.checkpointPath.resolve(
+                        String.format("%s%d", storage.REMOTE_CHECKPOINT_PREFIX, System.nanoTime()
+                        )
+                    )
+                );
+                storage.restoreFromLatestCheckpoint();
                 value = storage.db.get(test_key.getBytes());
                 Assertions.assertEquals(new String(value), test_key);
             }

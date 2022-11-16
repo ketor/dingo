@@ -91,9 +91,13 @@ public class RocksStorage implements Storage {
     private ColumnFamilyDescriptor icfDesc;
 
     private boolean destroy = false;
+    private boolean use_checkpoint = true;
 
     private static final int MAX_BLOOM_HASH_NUM = 10;
     private static final int MAX_PREFIX_LENGTH = 4;
+
+    public static final String LOCAL_CHECKPOINT_PREFIX = "local-";
+    public static final String REMOTE_CHECKPOINT_PREFIX = "remote-";
 
     public RocksStorage(CoreMeta coreMeta, String path, final String dbRocksOptionsFile,
                         final String logRocksOptionsFile, final int ttl) throws Exception {
@@ -265,7 +269,12 @@ public class RocksStorage implements Storage {
             backup();
             StorageApi storageApi = API.proxy(StorageApi.class, meta.location);
             String target = storageApi.transferBackup(meta.mpuId, meta.coreId);
-            FileTransferService.transferTo(meta.location, Paths.get(backupPath.toString()), Paths.get(target));
+            if (use_checkpoint) {
+                String checkpoint_name = GetLatestCheckpointName(LOCAL_CHECKPOINT_PREFIX);
+                FileTransferService.transferTo(meta.location, checkpointPath.resolve(checkpoint_name), Paths.get(target));
+            } else {
+                FileTransferService.transferTo(meta.location, backupPath, Paths.get(target));
+            }
             storageApi.applyBackup(meta.mpuId, meta.coreId);
             return null;
         });
@@ -304,7 +313,7 @@ public class RocksStorage implements Storage {
         try {
             if (checkpoint != null) {
                 // use nanoTime as checkpoint_name
-                String checkpoint_name = String.format("%d", System.nanoTime());
+                String checkpoint_name = String.format("%s%d", LOCAL_CHECKPOINT_PREFIX, System.nanoTime());
                 String checkpoint_dir_name = this.checkpointPath.resolve(checkpoint_name).toString();
                 checkpoint.createCheckpoint(checkpoint_dir_name);
             }
@@ -315,15 +324,21 @@ public class RocksStorage implements Storage {
 
     /**
      * Get Latest Checkpoint Dir Name
+     *
+     * @param prefix Prefix of the checkpoint_name
+     *              Use prefix to identify remote or local checkpoint.
      */
-    public String GetLatestCheckpointName(){
+    public String GetLatestCheckpointName(String prefix){
         String latest_checkpoint_name = "";
         if (checkpoint != null) {
             File[] directories = new File(this.checkpointPath.toString()).listFiles(File::isDirectory);
             if (directories.length > 0) {
                 for (File checkpoint_dir: directories) {
-                    if(checkpoint_dir.getName().compareTo(latest_checkpoint_name) > 0) {
-                        latest_checkpoint_name = checkpoint_dir.getName();
+                    // dir name end with ".tmp" maybe temp dir or litter dir
+                    if((!checkpoint_dir.getName().endsWith(".tmp")) && checkpoint_dir.getName().startsWith(prefix)) {
+                        if (checkpoint_dir.getName().compareTo(latest_checkpoint_name) > 0) {
+                            latest_checkpoint_name = checkpoint_dir.getName();
+                        }
                     }
                 }
             }
@@ -346,7 +361,7 @@ public class RocksStorage implements Storage {
             // Sort directory names by alphabetical order
             Comparator<File> comparatorFileName = new Comparator<File>(){
                 public int compare(File p1,File p2){
-                    return p1.getName().compareTo(p2.getName());
+                    return p2.getName().compareTo(p1.getName());
                 }
             };
 
@@ -354,9 +369,17 @@ public class RocksStorage implements Storage {
             Arrays.sort(directories, comparatorFileName);
 
             // Delete old checkpoint directories
+            int persistCount = 0;
             if (directories.length > count) {
-                for (int i = 0; i < directories.length - count; i++) {
-                    FileUtils.deleteIfExists(directories[i].toPath());
+                for (int i = 0; i < directories.length; i++) {
+                    // dir name end with ".tmp" is delayed to delete
+                    if(!directories[i].getName().endsWith(".tmp")) {
+                        persistCount++;
+                    }
+
+                    if(persistCount > count){
+                        FileUtils.deleteIfExists(directories[i].toPath());
+                    }
                 }
             }
         } catch (Exception e) {
@@ -369,29 +392,22 @@ public class RocksStorage implements Storage {
      *
      * @throws RuntimeException
      */
-    public void restoreFromCheckpoint() {
+    public void restoreFromLatestCheckpoint() {
         if (destroy) {
             throw new RuntimeException();
         }
         try {
-            String latest_checkpoint_name = GetLatestCheckpointName();
+            String latest_checkpoint_name = GetLatestCheckpointName(REMOTE_CHECKPOINT_PREFIX);
+            if (latest_checkpoint_name.length() == 0){
+                throw new RuntimeException("GetLatestCheckpointName return null string");
+            }
 
-            //1.create temp new db dir for new RocksDB
+            //1.generate temp new db dir for new RocksDB
             Path temp_new_db_path = this.path.resolve("load_from_"+ latest_checkpoint_name);
             Path temp_old_db_path = this.path.resolve("will_delete_soon_"+ latest_checkpoint_name);
 
-            FileUtils.createDirectories(temp_new_db_path);
-
-            //2.hard link sst files from checkpoint dir to temp dir
-            //  copy CURRENT, MANIFEST, OPTIONS file to temp dir
-            File[] directories = new File(this.checkpointPath.resolve(latest_checkpoint_name).toString()).listFiles(File::isFile);
-            for(File file: directories){
-                if(file.getName().endsWith(".sst")) {
-                    Files.createLink(temp_new_db_path.resolve(file.getName()), file.toPath());
-                } else {
-                    Files.copy(file.toPath(), temp_new_db_path.resolve(file.getName()));
-                }
-            }
+            //2.rename remote checkpoint to temp_new_db_path
+            Files.move(this.checkpointPath.resolve(latest_checkpoint_name), temp_new_db_path);
 
             //3.rename old db to will_delete_soon_[checkpoint_name]
             checkpoint.close();
@@ -415,6 +431,12 @@ public class RocksStorage implements Storage {
     }
 
     public void backup() {
+        if (use_checkpoint) {
+            createNewCheckpoint();
+            purgeOldCheckpoint(3);
+            return;
+        }
+
         if (destroy) {
             return;
         }
@@ -431,11 +453,21 @@ public class RocksStorage implements Storage {
 
     @Override
     public String receiveBackup() {
-        return this.backupPath.toString();
+        if (use_checkpoint){
+            String checkpoint_name = String.format("%s%d", REMOTE_CHECKPOINT_PREFIX, System.nanoTime());
+            return this.checkpointPath.resolve(checkpoint_name).toString();
+        } else {
+            return this.backupPath.toString();
+        }
     }
 
     @Override
     public void applyBackup() {
+        if (use_checkpoint){
+            restoreFromLatestCheckpoint();
+            return;
+        }
+
         if (destroy) {
             throw new RuntimeException();
         }
