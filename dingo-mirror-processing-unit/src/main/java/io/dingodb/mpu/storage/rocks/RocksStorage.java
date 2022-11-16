@@ -27,45 +27,10 @@ import io.dingodb.mpu.instruction.Instruction;
 import io.dingodb.mpu.storage.Storage;
 import io.dingodb.net.service.FileTransferService;
 import lombok.extern.slf4j.Slf4j;
-import org.rocksdb.AbstractEventListener;
-import org.rocksdb.BackgroundErrorReason;
-import org.rocksdb.BackupEngine;
-import org.rocksdb.BackupEngineOptions;
-import org.rocksdb.BlockBasedTableConfig;
-import org.rocksdb.BloomFilter;
-import org.rocksdb.Cache;
-import org.rocksdb.ColumnFamilyDescriptor;
-import org.rocksdb.ColumnFamilyHandle;
-import org.rocksdb.ColumnFamilyOptions;
-import org.rocksdb.CompactionJobInfo;
-import org.rocksdb.CompressionType;
-import org.rocksdb.ConfigOptions;
-import org.rocksdb.DBOptions;
-import org.rocksdb.FileOperationInfo;
-import org.rocksdb.FlushJobInfo;
-import org.rocksdb.FlushOptions;
-import org.rocksdb.LRUCache;
-import org.rocksdb.MemTableInfo;
-import org.rocksdb.OptionsUtil;
-import org.rocksdb.Range;
-import org.rocksdb.ReadOptions;
-import org.rocksdb.RestoreOptions;
-import org.rocksdb.RocksDB;
-import org.rocksdb.RocksDBException;
-import org.rocksdb.RocksIterator;
-import org.rocksdb.Slice;
-import org.rocksdb.Snapshot;
-import org.rocksdb.Status;
-import org.rocksdb.StringAppendOperator;
-import org.rocksdb.TableFileCreationBriefInfo;
-import org.rocksdb.TableFileCreationInfo;
-import org.rocksdb.TableFileDeletionInfo;
-import org.rocksdb.TtlDB;
-import org.rocksdb.WriteBatch;
-import org.rocksdb.WriteOptions;
-import org.rocksdb.WriteStallInfo;
+import org.rocksdb.*;
 
 import java.io.File;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
@@ -75,6 +40,7 @@ import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.LockSupport;
+import java.util.Comparator;
 
 import static io.dingodb.common.codec.PrimitiveCodec.encodeLong;
 import static io.dingodb.mpu.Constant.API;
@@ -99,6 +65,7 @@ public class RocksStorage implements Storage {
     public final Path instructionPath;
     public final Path dbPath;
     public final Path backupPath;
+    public final Path checkpointPath;
     public final Path dcfPath;
     public final Path mcfPath;
     public final Path icfPath;
@@ -111,6 +78,7 @@ public class RocksStorage implements Storage {
     public final LinkedRunner runner;
 
     public BackupEngine backup;
+    public Checkpoint checkpoint;
     public RocksDB instruction;
     public RocksDB db;
 
@@ -137,6 +105,7 @@ public class RocksStorage implements Storage {
         this.ttl = ttl;
 
         this.backupPath = this.path.resolve("backup");
+        this.checkpointPath = this.path.resolve("checkpoint");
 
         this.dbPath = this.path.resolve("db");
         this.dcfPath = this.dbPath.resolve("data");
@@ -146,6 +115,7 @@ public class RocksStorage implements Storage {
         this.icfPath = this.instructionPath.resolve("data");
         FileUtils.createDirectories(this.instructionPath);
         FileUtils.createDirectories(this.backupPath);
+        FileUtils.createDirectories(this.checkpointPath);
         FileUtils.createDirectories(this.dbPath);
         this.instruction = createInstruction();
         log.info("Create {} instruction db.", coreMeta.label);
@@ -153,6 +123,7 @@ public class RocksStorage implements Storage {
         this.writeOptions = new WriteOptions();
         log.info("Create {} db,  ttl: {}.", coreMeta.label, this.ttl);
         backup = BackupEngine.open(db.getEnv(), new BackupEngineOptions(backupPath.toString()));
+        checkpoint = Checkpoint.create(db);
         log.info("Create rocks storage for {} success.", coreMeta.label);
     }
 
@@ -268,6 +239,8 @@ public class RocksStorage implements Storage {
         this.instruction = null;
         this.backup.close();
         this.backup = null;
+        this.checkpoint.close();
+        this.checkpoint = null;
         /**
          * to avoid the file handle leak when drop table
          */
@@ -316,6 +289,128 @@ public class RocksStorage implements Storage {
             }
         } catch (RocksDBException e) {
             log.error("Flush instruction error.", e);
+        }
+    }
+
+    /**
+     * Create new RocksDB checkpoint in backup dir
+     *
+     * @throws RuntimeException
+     */
+    public void createNewCheckpoint() {
+        if (destroy) {
+            return;
+        }
+        try {
+            if (checkpoint != null) {
+                // use nanoTime as checkpoint_name
+                String checkpoint_name = String.format("%d", System.nanoTime());
+                String checkpoint_dir_name = this.checkpointPath.resolve(checkpoint_name).toString();
+                checkpoint.createCheckpoint(checkpoint_dir_name);
+            }
+        } catch (RocksDBException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    /**
+     * Get Latest Checkpoint Dir Name
+     */
+    public String GetLatestCheckpointName(){
+        String latest_checkpoint_name = "";
+        if (checkpoint != null) {
+            File[] directories = new File(this.checkpointPath.toString()).listFiles(File::isDirectory);
+            if (directories.length > 0) {
+                for (File checkpoint_dir: directories) {
+                    if(checkpoint_dir.getName().compareTo(latest_checkpoint_name) > 0) {
+                        latest_checkpoint_name = checkpoint_dir.getName();
+                    }
+                }
+            }
+        }
+        return latest_checkpoint_name;
+    }
+
+    /**
+     * Purge Old checkpoint, only retain latest [count] checkpoints.
+     *
+     * @param count Count of checkpoint to retain
+     *
+     * @throws RuntimeException
+     */
+    public void purgeOldCheckpoint(int count) {
+        if (destroy) {
+            return;
+        }
+        try {
+            // Sort directory names by alphabetical order
+            Comparator<File> comparatorFileName = new Comparator<File>(){
+                public int compare(File p1,File p2){
+                    return p1.getName().compareTo(p2.getName());
+                }
+            };
+
+            File[] directories = new File(this.checkpointPath.toString()).listFiles(File::isDirectory);
+            Arrays.sort(directories, comparatorFileName);
+
+            // Delete old checkpoint directories
+            if (directories.length > count) {
+                for (int i = 0; i < directories.length - count; i++) {
+                    FileUtils.deleteIfExists(directories[i].toPath());
+                }
+            }
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    /**
+     * Restore db from latest checkpoint
+     *
+     * @throws RuntimeException
+     */
+    public void restoreFromCheckpoint() {
+        if (destroy) {
+            throw new RuntimeException();
+        }
+        try {
+            String latest_checkpoint_name = GetLatestCheckpointName();
+
+            //1.create temp new db dir for new RocksDB
+            Path temp_new_db_path = this.path.resolve("load_from_"+ latest_checkpoint_name);
+            Path temp_old_db_path = this.path.resolve("will_delete_soon_"+ latest_checkpoint_name);
+
+            FileUtils.createDirectories(temp_new_db_path);
+
+            //2.hard link sst files from checkpoint dir to temp dir
+            //  copy CURRENT, MANIFEST, OPTIONS file to temp dir
+            File[] directories = new File(this.checkpointPath.resolve(latest_checkpoint_name).toString()).listFiles(File::isFile);
+            for(File file: directories){
+                if(file.getName().endsWith(".sst")) {
+                    Files.createLink(temp_new_db_path.resolve(file.getName()), file.toPath());
+                } else {
+                    Files.copy(file.toPath(), temp_new_db_path.resolve(file.getName()));
+                }
+            }
+
+            //3.rename old db to will_delete_soon_[checkpoint_name]
+            checkpoint.close();
+            checkpoint = null;
+            closeDB();
+            Files.move(this.dbPath, temp_old_db_path);
+
+            //4.rename temp new db dir to new db dir
+            Files.move(temp_new_db_path, this.dbPath);
+
+            //5.createDB()
+            db = createDB();
+            checkpoint = Checkpoint.create(db);
+
+            //6.delete old db thoroughly
+            FileUtils.deleteIfExists(temp_old_db_path);
+
+        } catch (Exception e) {
+            throw new RuntimeException(e);
         }
     }
 
