@@ -92,6 +92,7 @@ public class RocksStorage implements Storage {
 
     private boolean destroy = false;
     private boolean use_checkpoint = true;
+    private boolean disable_checkpoint_purge = false;
 
     private static final int MAX_BLOOM_HASH_NUM = 10;
     private static final int MAX_PREFIX_LENGTH = 4;
@@ -265,13 +266,16 @@ public class RocksStorage implements Storage {
 
     @Override
     public CompletableFuture<Void> transferTo(CoreMeta meta) {
+        log.info(String.format("RocksStorage::transferTo [%s][%s]", meta.label, meta.location.toString()));
         return Executors.submit("transfer-to-" + meta.label, () -> {
             backup();
             StorageApi storageApi = API.proxy(StorageApi.class, meta.location);
             String target = storageApi.transferBackup(meta.mpuId, meta.coreId);
             if (use_checkpoint) {
+                this.disable_checkpoint_purge = true;
                 String checkpoint_name = GetLatestCheckpointName(LOCAL_CHECKPOINT_PREFIX);
                 FileTransferService.transferTo(meta.location, checkpointPath.resolve(checkpoint_name), Paths.get(target));
+                this.disable_checkpoint_purge = false;
             } else {
                 FileTransferService.transferTo(meta.location, backupPath, Paths.get(target));
             }
@@ -354,7 +358,7 @@ public class RocksStorage implements Storage {
      * @throws RuntimeException
      */
     public void purgeOldCheckpoint(int count) {
-        if (destroy) {
+        if (destroy || disable_checkpoint_purge) {
             return;
         }
         try {
@@ -393,21 +397,23 @@ public class RocksStorage implements Storage {
      * @throws RuntimeException
      */
     public void restoreFromLatestCheckpoint() {
+        log.info("RocksStorage::restoreFromLatestCheckpoint");
         if (destroy) {
             throw new RuntimeException();
         }
         try {
-            String latest_checkpoint_name = GetLatestCheckpointName(REMOTE_CHECKPOINT_PREFIX);
-            if (latest_checkpoint_name.length() == 0){
+            String checkpoint_name = String.format("%s%s", REMOTE_CHECKPOINT_PREFIX, "checkpoint");
+            if (checkpoint_name.length() == 0){
                 throw new RuntimeException("GetLatestCheckpointName return null string");
             }
+            log.info("RocksStorage::restoreFromLatestCheckpoint  checkpoint_name=" + checkpoint_name);
 
             //1.generate temp new db dir for new RocksDB
-            Path temp_new_db_path = this.path.resolve("load_from_"+ latest_checkpoint_name);
-            Path temp_old_db_path = this.path.resolve("will_delete_soon_"+ latest_checkpoint_name);
+            Path temp_new_db_path = this.path.resolve("load_from_"+ checkpoint_name);
+            Path temp_old_db_path = this.path.resolve("will_delete_soon_"+ checkpoint_name);
 
             //2.rename remote checkpoint to temp_new_db_path
-            Files.move(this.checkpointPath.resolve(latest_checkpoint_name), temp_new_db_path);
+            Files.move(this.checkpointPath.resolve(checkpoint_name), temp_new_db_path);
 
             //3.rename old db to will_delete_soon_[checkpoint_name]
             checkpoint.close();
@@ -424,6 +430,7 @@ public class RocksStorage implements Storage {
 
             //6.delete old db thoroughly
             FileUtils.deleteIfExists(temp_old_db_path);
+            log.info("RocksStorage::restoreFromLatestCheckpoint  finished =" + checkpoint_name);
 
         } catch (Exception e) {
             throw new RuntimeException(e);
@@ -454,8 +461,13 @@ public class RocksStorage implements Storage {
     @Override
     public String receiveBackup() {
         if (use_checkpoint){
-            String checkpoint_name = String.format("%s%d", REMOTE_CHECKPOINT_PREFIX, System.nanoTime());
-            return this.checkpointPath.resolve(checkpoint_name).toString();
+            String checkpoint_name = String.format("%s%s", REMOTE_CHECKPOINT_PREFIX, "checkpoint");
+            log.info(String.format("receiveBackup path=[%s]\n", this.checkpointPath.resolve(checkpoint_name).toString()));
+
+            FileUtils.deleteIfExists(this.path.resolve(checkpoint_name));
+            FileUtils.createDirectories(this.path.resolve(checkpoint_name));
+
+            return this.dbPath.resolve(checkpoint_name).toString();
         } else {
             return this.backupPath.toString();
         }

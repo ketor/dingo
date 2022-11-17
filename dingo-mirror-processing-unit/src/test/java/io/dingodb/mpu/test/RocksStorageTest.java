@@ -132,7 +132,7 @@ public class RocksStorageTest {
                 Files.move(
                     storage.checkpointPath.resolve(latest_checkpoint_name),
                     storage.checkpointPath.resolve(
-                        String.format("%s%d", storage.REMOTE_CHECKPOINT_PREFIX, System.nanoTime()
+                        String.format("%s%s", storage.REMOTE_CHECKPOINT_PREFIX, "checkpoint"
                         )
                     )
                 );
