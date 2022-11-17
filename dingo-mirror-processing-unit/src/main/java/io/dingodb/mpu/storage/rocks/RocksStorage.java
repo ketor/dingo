@@ -402,18 +402,18 @@ public class RocksStorage implements Storage {
             throw new RuntimeException();
         }
         try {
-            String checkpoint_name = String.format("%s%s", REMOTE_CHECKPOINT_PREFIX, "checkpoint");
-            if (checkpoint_name.length() == 0){
+            String remote_checkpoint_dir = String.format("%s%s", REMOTE_CHECKPOINT_PREFIX, "checkpoint");
+            if (remote_checkpoint_dir.length() == 0){
                 throw new RuntimeException("GetLatestCheckpointName return null string");
             }
-            log.info("RocksStorage::restoreFromLatestCheckpoint  checkpoint_name=" + checkpoint_name);
+            log.info("RocksStorage::restoreFromLatestCheckpoint  remote_checkpoint_dir=" + remote_checkpoint_dir);
 
             //1.generate temp new db dir for new RocksDB
-            Path temp_new_db_path = this.path.resolve("load_from_"+ checkpoint_name);
-            Path temp_old_db_path = this.path.resolve("will_delete_soon_"+ checkpoint_name);
+            Path temp_new_db_path = this.path.resolve("load_from_"+ remote_checkpoint_dir);
+            Path temp_old_db_path = this.path.resolve("will_delete_soon_"+ remote_checkpoint_dir);
 
             //2.rename remote checkpoint to temp_new_db_path
-            Files.move(this.checkpointPath.resolve(checkpoint_name), temp_new_db_path);
+            Files.move(this.path.resolve(remote_checkpoint_dir), temp_new_db_path);
 
             //3.rename old db to will_delete_soon_[checkpoint_name]
             checkpoint.close();
@@ -430,7 +430,7 @@ public class RocksStorage implements Storage {
 
             //6.delete old db thoroughly
             FileUtils.deleteIfExists(temp_old_db_path);
-            log.info("RocksStorage::restoreFromLatestCheckpoint  finished =" + checkpoint_name);
+            log.info("RocksStorage::restoreFromLatestCheckpoint  finished =" + remote_checkpoint_dir);
 
         } catch (Exception e) {
             throw new RuntimeException(e);
@@ -462,12 +462,12 @@ public class RocksStorage implements Storage {
     public String receiveBackup() {
         if (use_checkpoint){
             String checkpoint_name = String.format("%s%s", REMOTE_CHECKPOINT_PREFIX, "checkpoint");
-            log.info(String.format("receiveBackup path=[%s]\n", this.checkpointPath.resolve(checkpoint_name).toString()));
+            log.info(String.format("receiveBackup path=[%s]\n", this.path.resolve(checkpoint_name).toString()));
 
             FileUtils.deleteIfExists(this.path.resolve(checkpoint_name));
             FileUtils.createDirectories(this.path.resolve(checkpoint_name));
 
-            return this.dbPath.resolve(checkpoint_name).toString();
+            return this.path.resolve(checkpoint_name).toString();
         } else {
             return this.backupPath.toString();
         }

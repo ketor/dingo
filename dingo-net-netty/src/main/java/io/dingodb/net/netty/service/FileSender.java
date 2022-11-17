@@ -52,7 +52,7 @@ public class FileSender implements io.dingodb.net.service.FileTransferService {
 
     @Override
     public void transfer(Location location, Path source, Path target) {
-        log.info(String.format("FileSender::transfer Location=[%s] Path=from[%s]to[%s]", location.toString(), source.toString(), target.toString()));
+        log.info(String.format("FileSender::transfer Location=[%s] Path=from [%s] to [%s]", location.toString(), source.toString(), target.toString()));
         if (!Files.exists(source) ) {
             throw new IllegalArgumentException(source + " not found.");
         }

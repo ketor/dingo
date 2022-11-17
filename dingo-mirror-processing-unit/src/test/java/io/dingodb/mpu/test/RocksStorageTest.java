@@ -131,7 +131,7 @@ public class RocksStorageTest {
                 // make a fake remote checkpoint
                 Files.move(
                     storage.checkpointPath.resolve(latest_checkpoint_name),
-                    storage.checkpointPath.resolve(
+                    storage.path.resolve(
                         String.format("%s%s", storage.REMOTE_CHECKPOINT_PREFIX, "checkpoint"
                         )
                     )
