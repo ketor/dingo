@@ -21,6 +21,7 @@ import io.dingodb.common.util.Optional;
 import io.dingodb.net.NetError;
 import io.dingodb.net.api.ApiRegistry;
 import io.dingodb.net.netty.api.ApiRegistryImpl;
+import io.dingodb.net.netty.service.FileReceiver;
 import io.dingodb.net.service.FileTransferService;
 import io.netty.bootstrap.Bootstrap;
 import io.netty.channel.ChannelInitializer;

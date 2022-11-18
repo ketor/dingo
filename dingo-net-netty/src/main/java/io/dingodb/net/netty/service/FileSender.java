@@ -78,6 +78,7 @@ public class FileSender implements io.dingodb.net.service.FileTransferService {
                 read = (int) Math.min(size - position, block);
                 position += (buffer = ch.buffer(USER_DEFINE_T, read)).writeBytes(fileChannel, position, read);
                 ch.send(buffer);
+                log.info(String.format("FileSender::send_buffer position=[%d] read=[%d] source=[%s]", position, read,  source.toString()));
             }
             ch.send(ch.buffer(USER_DEFINE_T, 0));
             future.join();

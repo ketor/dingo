@@ -187,6 +187,7 @@ public class Channel implements io.dingodb.net.Channel {
             switch (type) {
                 case USER_DEFINE_T:
                     if (directListener != null) {
+                        System.out.println(String.format("Channel::processMessage USER_DEFINE_T size=%d", buffer.capacity()));
                         directListener.accept(buffer);
                         return;
                     }

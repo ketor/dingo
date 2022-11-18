@@ -39,17 +39,47 @@ import static io.dingodb.net.Message.FILE_TRANSFER;
 public class FileReceiver implements Consumer<ByteBuffer> {
 
     private static final NetService netService = NetServiceProvider.NET_SERVICE_INSTANCE;
-
+    public static boolean FileReceiverInitialized = false;
+/*
     static {
+        System.out.println("FILE_TRANSFER FILE_TRANSFER FILE_TRANSFER FILE_TRANSFER");
         netService.registerTagMessageListener(
             FILE_TRANSFER,
             (msg, ch) -> {
+                System.out.println(String.format("registerTagMessageListener FILE_TRANSFER path=[%s]", PrimitiveCodec.readString(msg.content())));
                 try {
                     ((Channel) ch).directListener(
                         new FileReceiver(Paths.get(PrimitiveCodec.readString(msg.content())), (Channel) ch)
                     );
                 } catch (Exception e) {
                     log.info("FileReceiver::registerTagMessageListener Exception {}", e.toString(), e);
+                    System.out.println(String.format("FileReceiver::registerTagMessageListener Exception %s", e.toString()));
+                    throw new RuntimeException(e);
+                }
+            }
+        );
+    }*/
+
+    public static void init() {
+        System.out.println("FILE_TRANSFER FILE_TRANSFER FILE_TRANSFER FILE_TRANSFER");
+        if (FileReceiverInitialized) {
+            return;
+        }
+
+        System.out.println("22222 FILE_TRANSFER FILE_TRANSFER FILE_TRANSFER FILE_TRANSFER");
+        FileReceiverInitialized = true;
+
+        netService.registerTagMessageListener(
+            FILE_TRANSFER,
+            (msg, ch) -> {
+                System.out.println(String.format("registerTagMessageListener FILE_TRANSFER path=[%s]", PrimitiveCodec.readString(msg.content())));
+                try {
+                    ((Channel) ch).directListener(
+                        new FileReceiver(Paths.get(PrimitiveCodec.readString(msg.content())), (Channel) ch)
+                    );
+                } catch (Exception e) {
+                    log.info("FileReceiver::registerTagMessageListener Exception {}", e.toString(), e);
+                    System.out.println(String.format("FileReceiver::registerTagMessageListener Exception %s", e.toString()));
                     throw new RuntimeException(e);
                 }
             }

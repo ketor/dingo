@@ -23,6 +23,7 @@ import io.dingodb.net.Channel;
 import io.dingodb.net.Message;
 import io.dingodb.net.MessageListener;
 import io.dingodb.net.MessageListenerProvider;
+import io.dingodb.net.netty.service.FileReceiver;
 import lombok.extern.slf4j.Slf4j;
 
 import java.util.HashMap;
@@ -62,6 +63,7 @@ public class TagRegistry {
     }
 
     public synchronized void registerTagMessageListener(String tag, MessageListener listener) {
+        System.out.println("11111 registerTagMessageListener tag=" + tag);
         Parameters.nonNull(tag, "tag");
         Parameters.nonNull(listener, "listener");
         DebugLog.debug(log, "Register message listener, tag: [{}], listener class: [{}]", tag, listener.getClass());
@@ -83,7 +85,7 @@ public class TagRegistry {
 
     public final MessageListener tagMessageListener = (msg, ch) -> {
         String tag = msg.tag();
-        System.out.println("tag=" + tag);
+        //System.out.println("tag=" + tag);
         if (tag == null) {
             return;
         }

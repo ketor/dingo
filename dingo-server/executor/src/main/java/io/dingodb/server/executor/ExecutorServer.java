@@ -23,6 +23,7 @@ import io.dingodb.exec.Services;
 import io.dingodb.net.NetService;
 import io.dingodb.net.NetServiceProvider;
 import io.dingodb.net.api.Ping;
+import io.dingodb.net.netty.service.FileReceiver;
 import io.dingodb.server.api.LogLevelApi;
 import io.dingodb.server.api.MetaServiceApi;
 import io.dingodb.server.api.ServerApi;
@@ -136,6 +137,7 @@ public class ExecutorServer {
     private NetService loadNetService() {
         NetService netService = ServiceLoader.load(NetServiceProvider.class).iterator().next().get();
         Services.initNetService();
+        //FileReceiver.init();
         return netService;
     }
 
