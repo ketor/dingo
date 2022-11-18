@@ -83,6 +83,7 @@ public class TagRegistry {
 
     public final MessageListener tagMessageListener = (msg, ch) -> {
         String tag = msg.tag();
+        System.out.println("tag=" + tag);
         if (tag == null) {
             return;
         }

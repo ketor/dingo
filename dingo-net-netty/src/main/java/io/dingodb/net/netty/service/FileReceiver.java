@@ -49,6 +49,7 @@ public class FileReceiver implements Consumer<ByteBuffer> {
                         new FileReceiver(Paths.get(PrimitiveCodec.readString(msg.content())), (Channel) ch)
                     );
                 } catch (Exception e) {
+                    log.info("FileReceiver::registerTagMessageListener Exception {}", e.toString(), e);
                     throw new RuntimeException(e);
                 }
             }
@@ -59,6 +60,7 @@ public class FileReceiver implements Consumer<ByteBuffer> {
     private final Channel channel;
 
     public FileReceiver(Path path, Channel channel) throws Exception {
+        System.out.println(String.format("FileReceiver::FileReceiver Path=[%s] Parent=[%s]", path.toString(), path.getParent()));
         log.info(String.format("FileReceiver::FileReceiver Path=[%s] Parent=[%s]", path.toString(), path.getParent().toString()));
         Files.deleteIfExists(path);
         Files.createDirectories(path.getParent());
